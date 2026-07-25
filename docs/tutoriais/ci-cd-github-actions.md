@@ -87,21 +87,21 @@ essa versão").
 
 ## 🆚 Autenticar no Registry: Secrets Fixos vs OIDC
 
-| Aspecto | Usuário/senha ou token fixo (ex: Docker Hub) | OIDC / Federação de identidade (ex: AWS) |
-| --- | --- | --- |
-| O que fica guardado | uma credencial de longa duração em Secrets do repo | nada de permanente — o provedor confia no token que o próprio GitHub emite pra cada execução |
-| Se vazar | credencial válida até alguém revogar manualmente | token expira em minutos, é de uso único por execução |
-| Configuração | mais simples: 2 secrets + `docker/login-action` | mais peças: um provedor OIDC + uma role com política de confiança no lado do cloud (ver Terraform em `iac/`) |
-| Quem restringe o acesso | quem guarda a credencial certo | a própria condição da role (ex: "só de `repo:org/repo:ref:refs/heads/master`") |
+| Aspecto                 | Usuário/senha ou token fixo (ex: Docker Hub)       | OIDC / Federação de identidade (ex: AWS)                                                                     |
+| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| O que fica guardado     | uma credencial de longa duração em Secrets do repo | nada de permanente — o provedor confia no token que o próprio GitHub emite pra cada execução                 |
+| Se vazar                | credencial válida até alguém revogar manualmente   | token expira em minutos, é de uso único por execução                                                         |
+| Configuração            | mais simples: 2 secrets + `docker/login-action`    | mais peças: um provedor OIDC + uma role com política de confiança no lado do cloud (ver Terraform em `iac/`) |
+| Quem restringe o acesso | quem guarda a credencial certo                     | a própria condição da role (ex: "só de `repo:org/repo:ref:refs/heads/master`")                               |
 
 OIDC (usado por `aws-actions/configure-aws-credentials` + `amazon-ecr-login`) evita guardar uma
 credencial de nuvem de longa duração como Secret: a cada execução, o GitHub emite um token de
-identidade assinado, e o provedor de nuvem (AWS, aqui) confia nesse token porque uma *IAM Role*
+identidade assinado, e o provedor de nuvem (AWS, aqui) confia nesse token porque uma _IAM Role_
 foi configurada pra aceitar apenas tokens vindos deste repositório/branch específico. Sem
 credencial fixa armazenada, não há credencial fixa pra vazar.
 
 **O ARN da role (`role-to-assume`) não é segredo** — é só um identificador, como um nome de
-usuário. Quem decide se um token consegue assumir a role é a *trust policy* do lado da AWS (o
+usuário. Quem decide se um token consegue assumir a role é a _trust policy_ do lado da AWS (o
 `StringLike` no bloco ✅/❌ abaixo), não o fato de o ARN ficar visível no workflow. Publicar o ARN
 em texto puro não abre acesso a mais ninguém; guardá-lo como Secret é só conveniência (evita
 editar o YAML se a role mudar), não uma exigência de segurança.
@@ -127,10 +127,13 @@ password: "minha-senha-123" # ❌ fica em texto puro no histórico do git
 ```hcl
 "StringLike": {
   "token.actions.githubusercontent.com:sub": [
-    "repo:LanPRD/estudos-ci-cd:ref:refs/heads/master"
+    "repo:LanPRD@76744839/estudos-ci-cd@1311551142:ref:refs/heads/master"
   ]
 }
 ```
+
+(o `@76744839`/`@1311551142` são os IDs imutáveis do owner e do repo — ver 🐛 abaixo antes de
+copiar só o formato `repo:OWNER/REPO:ref:...` de um tutorial mais antigo.)
 
 **❌ Deixar a condição de confiança aberta demais:**
 
@@ -193,15 +196,15 @@ um token OIDC — sem essa permissão, `configure-aws-credentials` não teria o 
 
 Job `build` (`runs-on: ubuntu-latest`):
 
-| Step | Action/comando | Papel |
-| --- | --- | --- |
-| Checkout | `actions/checkout@v7` | Clona o repositório no runner |
-| Setup Node | `actions/setup-node@v7`, `cache: npm` | Instala o Node na versão de `env.NODE_VERSION`, com cache de deps |
-| Instalar deps | `npm install` | Instala as dependências do projeto |
-| Testar | `npm test` | Gate de qualidade — se falhar, o job para |
-| Gerar tag | 7 chars do `$GITHUB_SHA` → `$GITHUB_OUTPUT` | Cria a tag rastreável ao commit |
-| Configurar credenciais AWS | `aws-actions/configure-aws-credentials@v6.2.3` | Assume `arn:aws:iam::958157975241:role/ecr-role` via OIDC |
-| Login no ECR | `aws-actions/amazon-ecr-login@v2` | Autentica o Docker no Amazon ECR |
+| Step                       | Action/comando                                 | Papel                                                             |
+| -------------------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
+| Checkout                   | `actions/checkout@v7`                          | Clona o repositório no runner                                     |
+| Setup Node                 | `actions/setup-node@v7`, `cache: npm`          | Instala o Node na versão de `env.NODE_VERSION`, com cache de deps |
+| Instalar deps              | `npm install`                                  | Instala as dependências do projeto                                |
+| Testar                     | `npm test`                                     | Gate de qualidade — se falhar, o job para                         |
+| Gerar tag                  | 7 chars do `$GITHUB_SHA` → `$GITHUB_OUTPUT`    | Cria a tag rastreável ao commit                                   |
+| Configurar credenciais AWS | `aws-actions/configure-aws-credentials@v6.2.3` | Assume `arn:aws:iam::958157975241:role/ecr-role` via OIDC         |
+| Login no ECR               | `aws-actions/amazon-ecr-login@v2`              | Autentica o Docker no Amazon ECR                                  |
 
 A role e o repositório ECR usados aqui vêm do Terraform em `iac/` (ver `iac/iam.tf` e
 `iac/ecr.tf`) — o `sub` da role de confiança está atrelado a este repo e à branch `master`.
@@ -216,6 +219,38 @@ A role e o repositório ECR usados aqui vêm do Terraform em `iac/` (ver `iac/ia
 ---
 
 ## ⚠️ Armadilhas
+
+**🐛 `AssumeRoleWithWebIdentity` nega mesmo com a trust policy "certa"** — desde 15/07/2026, o
+GitHub emite o claim `sub` do token OIDC num formato diferente pra repositórios **criados,
+renomeados ou transferidos a partir dessa data**: em vez do formato clássico
+`repo:OWNER/REPO:ref:refs/heads/BRANCH`, o `sub` passa a incluir os IDs imutáveis de owner e repo —
+`repo:OWNER@OWNER_ID/REPO@REPO_ID:ref:refs/heads/BRANCH`. É uma proteção contra reaproveitamento de
+nome (repo deletado/renomeado e o nome antigo reusado por outra conta não herda a confiança). Repos
+mais antigos continuam no formato clássico até você optar pelo novo — mas qualquer repo novo, como
+este (`estudos-ci-cd`, criado em 25/07/2026), já nasce no formato novo. Uma trust policy escrita
+copiando o formato clássico de um tutorial (inclusive documentação mais antiga da própria AWS)
+nunca bate, e a AWS nega o `AssumeRoleWithWebIdentity` sem apontar o motivo — não há erro
+mencionando "sub" ou "formato".
+
+Pra pegar os dois IDs **antes** de escrever a trust policy pela primeira vez (sem depender de rodar
+a pipeline e ver ela falhar):
+
+```bash
+curl -s https://api.github.com/repos/<owner>/<repo> | jq '{repo_id: .id, owner_id: .owner.id}'
+```
+
+Se já tiver uma execução falhando e quiser confirmar o `sub` real que está sendo enviado, um step
+temporário decodifica o token (remova depois — não é pra ficar rodando permanentemente):
+
+```yaml
+- name: Debug OIDC claims
+  run: |
+    IDTOKEN=$(curl -sSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+      "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r '.value')
+    echo "$IDTOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq .
+```
+
+_(Fonte: [changelog oficial do GitHub sobre immutable subject claims](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/).)_
 
 **🚧 Migração em andamento, pipeline não publica nada no momento** — o workflow hoje testa, gera a
 tag e já autentica no ECR (role e permissões já configuradas), mas não existe (ainda) um step de
@@ -250,13 +285,13 @@ fazem sentido junto com a autenticação nova.
 
 ## 📝 Resumo
 
-| Decisão | Estado atual deste projeto | Alternativa comum |
-| --- | --- | --- |
-| Trigger | push em `master`, filtrado por `paths` | `pull_request`, tags, `workflow_dispatch` |
-| Instalar deps | `npm install` (inconsistente com o Dockerfile) | `npm ci` |
-| Registry | migrando de Docker Hub para AWS ECR (ainda sem step de push) | GitHub Container Registry, GCP Artifact Registry |
-| Autenticação | OIDC via IAM Role (`iac/iam.tf`) | Secrets fixos (usuário/token) |
-| Estratégia de tag | SHA curto + `latest` | SemVer, data, ambos combinados |
+| Decisão           | Estado atual deste projeto                                   | Alternativa comum                                |
+| ----------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| Trigger           | push em `master`, filtrado por `paths`                       | `pull_request`, tags, `workflow_dispatch`        |
+| Instalar deps     | `npm install` (inconsistente com o Dockerfile)               | `npm ci`                                         |
+| Registry          | migrando de Docker Hub para AWS ECR (ainda sem step de push) | GitHub Container Registry, GCP Artifact Registry |
+| Autenticação      | OIDC via IAM Role (`iac/iam.tf`)                             | Secrets fixos (usuário/token)                    |
+| Estratégia de tag | SHA curto + `latest`                                         | SemVer, data, ambos combinados                   |
 
 ## Referência
 
