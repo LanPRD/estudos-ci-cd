@@ -31,7 +31,7 @@ resource "aws_iam_role" "ecr-role" {
           },
           "StringLike" : {
             "token.actions.githubusercontent.com:sub" : [
-              "repo:LanPRD/estudos-ci-cd:ref:refs/heads/master"
+              "repo:LanPRD@76744839/estudos-ci-cd@1311551142:ref:refs/heads/master"
             ]
           }
         }
