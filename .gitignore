@@ -57,3 +57,13 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Claude Code local config and per-project memory
 /.claude/settings.local.json
 /.claude/memory/
+
+# Estado do Terraform — pode conter dados sensíveis
+*.tfstate
+*.tfstate.*
+
+# Variáveis com valores reais — use terraform.tfvars.example como referência
+*.tfvars
+
+# Providers e módulos baixados — regeneráveis com terraform init
+.terraform/
