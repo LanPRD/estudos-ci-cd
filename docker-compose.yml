@@ -1,0 +1,33 @@
+services:
+  database:
+    image: mysql:8
+    container_name: database
+    volumes:
+      - db:/var/lib/mysql
+    ports:
+      - 3306:3306
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=rocketseat-db
+      - MYSQL_USER=admin
+      - MYSQL_PASSWORD=root
+    networks:
+      - primeira-network
+
+  api-rocket:
+    build:
+      context: .
+    container_name: api-rocket
+    ports:
+      - 3000:3000
+    depends_on:
+      - database
+    networks:
+      - primeira-network
+
+networks:
+  primeira-network:
+    driver: bridge
+
+volumes:
+  db:
