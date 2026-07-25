@@ -164,7 +164,7 @@ CMD [ "node", "dist/main" ]
 estágio comum no meio em vez de repetir `FROM node:22-alpine` duas vezes.
 
 A versão do Node (`node:22-alpine`) é a mesma usada pelo workflow de CI (ver
-[tutorial de CI/CD](./ci-cd-github-actions-docker-hub.md)) — mantenha as duas alinhadas quando
+[tutorial de CI/CD](./ci-cd-github-actions.md)) — mantenha as duas alinhadas quando
 atualizar uma delas, pra não testar num ambiente e rodar em produção noutro.
 
 ---

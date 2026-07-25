@@ -1,4 +1,4 @@
-# CI/CD com GitHub Actions: Testar, Taguear e Publicar no Docker Hub
+# CI/CD com GitHub Actions: Testar, Taguear e Publicar uma Imagem
 
 ## 🤔 Como Garantir Que Só Código Testado Vira Imagem em Produção?
 
@@ -34,7 +34,9 @@ jobs:
 ```
 
 O `npm test` antes do build/push é o que transforma isso num **gate de qualidade**: uma falha
-interrompe o job e a imagem nunca chega a ser publicada.
+interrompe o job e a imagem nunca chega a ser publicada. O exemplo acima autentica com usuário e
+senha fixos (o jeito mais simples e mais comum). O projeto real está migrando para uma forma mais
+segura de autenticar — ver 🆚 abaixo.
 
 ---
 
@@ -50,8 +52,8 @@ push → branch monitorada
                                   [gerar tag rastreável ao commit]
                                                         │
                                                         ▼
-                                  [login no registry] → [build + push da imagem]
-                                                          tags: <sha curto> e latest
+                                  [autenticar no registry] → [build + push da imagem]
+                                                               tags: <sha curto> e latest
 ```
 
 ### Por que `env` para a versão do runtime
@@ -83,23 +85,26 @@ essa versão").
 
 ---
 
-## 🆚 `npm ci` vs `npm install` em CI
+## 🆚 Autenticar no Registry: Secrets Fixos vs OIDC
 
-| Aspecto | `npm ci` | `npm install` |
+| Aspecto | Usuário/senha ou token fixo (ex: Docker Hub) | OIDC / Federação de identidade (ex: AWS) |
 | --- | --- | --- |
-| Fonte da instalação | só o `package-lock.json` | `package.json`, pode reescrever o lock |
-| Se lock e package.json divergem | **falha** | reescreve o lock silenciosamente |
-| Velocidade | mais rápido (sem resolução de deps) | mais lento |
-| Uso recomendado | CI, builds reprodutíveis | desenvolvimento local, ao adicionar/remover deps |
+| O que fica guardado | uma credencial de longa duração em Secrets do repo | nada de permanente — o provedor confia no token que o próprio GitHub emite pra cada execução |
+| Se vazar | credencial válida até alguém revogar manualmente | token expira em minutos, é de uso único por execução |
+| Configuração | mais simples: 2 secrets + `docker/login-action` | mais peças: um provedor OIDC + uma role com política de confiança no lado do cloud (ver Terraform em `iac/`) |
+| Quem restringe o acesso | quem guarda a credencial certo | a própria condição da role (ex: "só de `repo:org/repo:ref:refs/heads/master`") |
 
-Em CI o objetivo é reproduzir exatamente o que está no lockfile — uma divergência silenciosa é
-exatamente o tipo de coisa que só aparece quando já é tarde.
+OIDC (usado por `aws-actions/configure-aws-credentials` + `amazon-ecr-login`) evita guardar uma
+credencial de nuvem de longa duração como Secret: a cada execução, o GitHub emite um token de
+identidade assinado, e o provedor de nuvem (AWS, aqui) confia nesse token porque uma *IAM Role*
+foi configurada pra aceitar apenas tokens vindos deste repositório/branch específico. Sem
+credencial fixa armazenada, não há credencial fixa pra vazar.
 
 ---
 
 ## ✅ Faça / ❌ Não Faça
 
-**✅ Guardar credenciais de registry como Secrets do repositório:**
+**✅ Guardar credenciais de longa duração como Secrets do repositório (quando não dá pra usar OIDC):**
 
 ```yaml
 password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -109,6 +114,24 @@ password: ${{ secrets.DOCKERHUB_TOKEN }}
 
 ```yaml
 password: "minha-senha-123" # ❌ fica em texto puro no histórico do git
+```
+
+**✅ Restringir a role OIDC a este repositório/branch específico** (trecho do `iac/iam.tf`):
+
+```hcl
+"StringLike": {
+  "token.actions.githubusercontent.com:sub": [
+    "repo:LanPRD/estudos-ci-cd:ref:refs/heads/master"
+  ]
+}
+```
+
+**❌ Deixar a condição de confiança aberta demais:**
+
+```hcl
+"StringLike": {
+  "token.actions.githubusercontent.com:sub": ["repo:*"] # ❌ qualquer repo do GitHub poderia assumir a role
+}
 ```
 
 **✅ Rodar os testes como gate antes de publicar:**
@@ -145,39 +168,37 @@ Job `build` (`runs-on: ubuntu-latest`):
 
 | Step | Action/comando | Papel |
 | --- | --- | --- |
-| Checkout | `actions/checkout@v4` | Clona o repositório no runner |
-| Setup Node | `actions/setup-node@v4`, `cache: npm` | Instala o Node na versão de `env.NODE_VERSION`, com cache de deps |
+| Checkout | `actions/checkout@v7` | Clona o repositório no runner |
+| Setup Node | `actions/setup-node@v7`, `cache: npm` | Instala o Node na versão de `env.NODE_VERSION`, com cache de deps |
 | Instalar deps | `npm install` | Instala as dependências do projeto |
 | Testar | `npm test` | Gate de qualidade — se falhar, o job para |
 | Gerar tag | 7 chars do `$GITHUB_SHA` → `$GITHUB_OUTPUT` | Cria a tag rastreável ao commit |
-| Login | `docker/login-action@v3` | Autentica no Docker Hub via secrets |
-| Build + Push | `docker/build-push-action@v5`, `push: true` | Builda e publica com 2 tags |
+| Configurar credenciais AWS | `aws-actions/configure-aws-credentials@v6.2.3` | Assume a role via OIDC (ver 🆚 acima) |
+| Login no ECR | `aws-actions/amazon-ecr-login@v2` | Autentica o Docker no Amazon ECR |
 
-```yaml
-tags: lanprd/estudos-ci-cd:${{ steps.generate_tag.outputs.sha }},lanprd/estudos-ci-cd:latest
-```
+A role e o repositório ECR usados aqui vêm do Terraform em `iac/` (ver `iac/iam.tf` e
+`iac/ecr.tf`) — o `sub` da role de confiança está atrelado a este repo e à branch `master`.
 
 ### 🔍 Onde Ver as Execuções
 
-- **GitHub → aba Actions** do repositório: cada execução, com logs por step — útil pra depurar um
-  `npm test` ou `docker login` que falhou.
-- **Docker Hub → `hub.docker.com/r/<usuário>/<repo>/tags`**: as imagens publicadas, uma por SHA,
-  mais a `latest`.
-- **Secrets do repositório**: `Settings → Secrets and variables → Actions` — onde
-  `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` são configurados; nunca aparecem nos logs do workflow.
+- **GitHub → aba Actions** do repositório: cada execução, com logs por step.
+- **AWS → ECR → repositório `estudos-ci-cd`**: as imagens publicadas (quando o step de push
+  existir — ver armadilha abaixo).
+- **AWS → IAM → Roles → `ecr-role`**: a role assumida via OIDC e sua política de confiança.
 
 ---
 
 ## ⚠️ Armadilhas
 
-**Este workflow usa `npm install`, não `npm ci`** — o `Dockerfile` do mesmo projeto já usa
-`npm ci` (mais estrito, ver tabela 🆚 acima); o `ci.yml` ficou inconsistente com isso. Vale
-alinhar os dois.
+**🚧 Migração em andamento, pipeline não publica nada no momento** — o workflow hoje testa, gera a
+tag e autentica no ECR, mas não existe (ainda) um step de build+push apontando pra ECR depois do
+login. `role-to-assume` na configuração de credenciais também está vazio. Os steps antigos do
+Docker Hub (`docker/login-action` + `docker/build-push-action`) ficaram comentados no arquivo como
+histórico da transição, não deletados — não rodam, mas também não devem ser reativados sem revisar
+se ainda fazem sentido junto com a autenticação nova.
 
-**Steps mortos comentados no arquivo** — logo abaixo do `docker/build-push-action@v5` existem
-dois steps comentados (`docker build`/`docker push` manuais). *(Inferência: parecem ter sido
-deixados como referência de como seria a versão manual do mesmo passo — o histórico do arquivo
-não confirma essa razão.)* Não afetam a execução, mas são candidatos a limpeza.
+**Este workflow usa `npm install`, não `npm ci`** — o `Dockerfile` do mesmo projeto já usa
+`npm ci` (mais estrito e reprodutível). Vale alinhar os dois quando a migração for finalizada.
 
 ---
 
@@ -189,9 +210,11 @@ não confirma essa razão.)* Não afetam a execução, mas são candidatos a lim
 3. Instalar dependências de forma reprodutível (`npm ci`) e rodar a suíte de testes como **gate**
    antes de qualquer publicação.
 4. Gerar uma tag rastreável ao commit (SHA curto), em vez de depender só de `latest`.
-5. Guardar usuário/token do registry como **Secrets** do repositório — nunca hardcoded.
-6. Usar uma action de login (`docker/login-action` ou equivalente) e uma de build+push
-   (`docker/build-push-action`) em vez de `docker build`/`docker push` manuais.
+5. Preferir OIDC a credenciais fixas quando o provedor de nuvem suportar (AWS, GCP e Azure
+   suportam); caso contrário, guardar usuário/token como **Secrets** do repositório — nunca
+   hardcoded.
+6. Usar uma action de login (`docker/login-action`, `amazon-ecr-login`, etc.) e uma de build+push
+   em vez de `docker build`/`docker push` manuais.
 7. Publicar com pelo menos duas tags: uma imutável (SHA) e uma móvel (`latest`).
 8. Conferir a execução na aba **Actions** do GitHub e a imagem publicada no registry.
 
@@ -199,14 +222,16 @@ não confirma essa razão.)* Não afetam a execução, mas são candidatos a lim
 
 ## 📝 Resumo
 
-| Decisão | Escolha deste projeto | Alternativa comum |
+| Decisão | Estado atual deste projeto | Alternativa comum |
 | --- | --- | --- |
 | Trigger | push em `master` | `pull_request`, tags, `workflow_dispatch` |
 | Instalar deps | `npm install` (inconsistente com o Dockerfile) | `npm ci` |
-| Registry | Docker Hub | GitHub Container Registry, AWS ECR, GCP Artifact Registry |
+| Registry | migrando de Docker Hub para AWS ECR (ainda sem step de push) | GitHub Container Registry, GCP Artifact Registry |
+| Autenticação | OIDC via IAM Role (`iac/iam.tf`) | Secrets fixos (usuário/token) |
 | Estratégia de tag | SHA curto + `latest` | SemVer, data, ambos combinados |
 
 ## Referência
 
 - `.github/workflows/ci.yml`
-- `Dockerfile` — buildado automaticamente pelo `docker/build-push-action`
+- `iac/iam.tf`, `iac/ecr.tf` — Terraform que provisiona a role OIDC e o repositório ECR usados aqui
+- `Dockerfile` — a imagem que este pipeline builda (quando o step de push existir)
