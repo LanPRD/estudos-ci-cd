@@ -3,7 +3,7 @@ name: "CI"
 on:
   push:
     branches:
-      - main
+      - master
 
 env:
   NODE_VERSION: "20"
@@ -44,10 +44,10 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           push: true
-          tags: lanprd/rocketseat-devops-ci-api:${{ steps.generate_tag.outputs.sha }},lanprd/rocketseat-devops-ci-api:latest
+          tags: lanprd/estudos-ci-cd:${{ steps.generate_tag.outputs.sha }},lanprd/estudos-ci-cd:latest
 
       # - name: Build docker image
-      #   run: docker build -t lanprd/rocketseat-devops-ci-api:${{ steps.generate_tag.outputs.sha }} .
+      #   run: docker build -t lanprd/estudos-ci-cd:${{ steps.generate_tag.outputs.sha }} .
 
       # - name: Push image
-      #   run: docker push lanprd/rocketseat-devops-ci-api:${{ steps.generate_tag.outputs.sha }}
+      #   run: docker push lanprd/estudos-ci-cd:${{ steps.generate_tag.outputs.sha }}
