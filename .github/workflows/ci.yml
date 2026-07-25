@@ -59,20 +59,13 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # - name: Login into the container registry
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # - name: Build and Push
-      #   uses: docker/build-push-action@v5
-      #   with:
-      #     push: true
-      #     tags: lanprd/estudos-ci-cd:${{ steps.generate_tag.outputs.sha }},lanprd/estudos-ci-cd:latest
-
-      # - name: Build docker image
-      #   run: docker build -t lanprd/estudos-ci-cd:${{ steps.generate_tag.outputs.sha }} .
+      - name: Build docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          TAG: ${{ steps.generate_tag.outputs.sha }}
+        run: |
+          docker build -t $REGISTRY/estudos-ci-cd:$TAG .
+          docker push $REGISTRY/estudos-ci-cd:$TAG
 
       # - name: Push image
       #   run: docker push lanprd/estudos-ci-cd:${{ steps.generate_tag.outputs.sha }}
