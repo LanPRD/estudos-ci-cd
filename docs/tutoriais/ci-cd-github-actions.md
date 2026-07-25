@@ -35,8 +35,8 @@ jobs:
 
 O `npm test` antes do build/push é o que transforma isso num **gate de qualidade**: uma falha
 interrompe o job e a imagem nunca chega a ser publicada. O exemplo acima autentica com usuário e
-senha fixos (o jeito mais simples e mais comum). O projeto real está migrando para uma forma mais
-segura de autenticar — ver 🆚 abaixo.
+senha fixos (o jeito mais simples e mais comum). O projeto real usa uma forma mais segura de
+autenticar (OIDC) — ver 🆚 abaixo.
 
 ---
 
@@ -205,15 +205,17 @@ Job `build` (`runs-on: ubuntu-latest`):
 | Gerar tag                  | 7 chars do `$GITHUB_SHA` → `$GITHUB_OUTPUT`    | Cria a tag rastreável ao commit                                   |
 | Configurar credenciais AWS | `aws-actions/configure-aws-credentials@v6.2.3` | Assume `arn:aws:iam::958157975241:role/ecr-role` via OIDC         |
 | Login no ECR               | `aws-actions/amazon-ecr-login@v2`              | Autentica o Docker no Amazon ECR                                  |
+| Build + Push                | `docker build` / `docker push` (manual)        | Builda a imagem e publica em `$ECR_REGISTRY/estudos-ci-cd:$TAG`   |
 
 A role e o repositório ECR usados aqui vêm do Terraform em `iac/` (ver `iac/iam.tf` e
-`iac/ecr.tf`) — o `sub` da role de confiança está atrelado a este repo e à branch `master`.
+`iac/ecr.tf`) — o `sub` da role de confiança está atrelado a este repo e à branch `master`. O
+registry vem do output do próprio step de login (`steps.login-ecr.outputs.registry`), e a tag é a
+gerada no step "Gerar tag" — a imagem final fica `<registry>/estudos-ci-cd:<sha>`.
 
 ### 🔍 Onde Ver as Execuções
 
 - **GitHub → aba Actions** do repositório: cada execução, com logs por step.
-- **AWS → ECR → repositório `estudos-ci-cd`**: as imagens publicadas (quando o step de push
-  existir — ver armadilha abaixo).
+- **AWS → ECR → repositório `estudos-ci-cd`**: as imagens publicadas, uma tag por SHA.
 - **AWS → IAM → Roles → `ecr-role`**: a role assumida via OIDC e sua política de confiança.
 
 ---
@@ -252,12 +254,15 @@ temporário decodifica o token (remova depois — não é pra ficar rodando perm
 
 _(Fonte: [changelog oficial do GitHub sobre immutable subject claims](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/).)_
 
-**🚧 Migração em andamento, pipeline não publica nada no momento** — o workflow hoje testa, gera a
-tag e já autentica no ECR (role e permissões já configuradas), mas não existe (ainda) um step de
-build+push apontando pra ECR depois do login. Os steps antigos do Docker Hub
-(`docker/login-action` + `docker/build-push-action`) ficaram comentados no arquivo como histórico
-da transição, não deletados — não rodam, mas também não devem ser reativados sem revisar se ainda
-fazem sentido junto com a autenticação nova.
+**Build + push manuais em vez de uma action dedicada** — o step final roda `docker build` e
+`docker push` diretamente (ver checklist item 6 abaixo, que recomenda o contrário). Funciona, mas
+uma action como `docker/build-push-action` (equivalente pra ECR não existe oficial, mas dá pra
+compor build-push-action + login-ecr) cuida de cache de camadas e evita erros de digitação nos
+comandos manuais — considere migrar se o pipeline crescer.
+
+Ainda sobra um step comentado órfão no fim do arquivo (`# - name: Push image`, um resquício da
+versão Docker Hub) — não afeta a execução, mas é candidato a limpeza junto dos outros comentários
+que já foram removidos.
 
 **Este workflow usa `npm install`, não `npm ci`** — o `Dockerfile` do mesmo projeto já usa
 `npm ci` (mais estrito e reprodutível). Vale alinhar os dois quando a migração for finalizada.
@@ -289,7 +294,7 @@ fazem sentido junto com a autenticação nova.
 | ----------------- | ------------------------------------------------------------ | ------------------------------------------------ |
 | Trigger           | push em `master`, filtrado por `paths`                       | `pull_request`, tags, `workflow_dispatch`        |
 | Instalar deps     | `npm install` (inconsistente com o Dockerfile)               | `npm ci`                                         |
-| Registry          | migrando de Docker Hub para AWS ECR (ainda sem step de push) | GitHub Container Registry, GCP Artifact Registry |
+| Registry          | AWS ECR (migrado de Docker Hub)                               | GitHub Container Registry, GCP Artifact Registry |
 | Autenticação      | OIDC via IAM Role (`iac/iam.tf`)                             | Secrets fixos (usuário/token)                    |
 | Estratégia de tag | SHA curto + `latest`                                         | SemVer, data, ambos combinados                   |
 
@@ -297,4 +302,4 @@ fazem sentido junto com a autenticação nova.
 
 - `.github/workflows/ci.yml`
 - `iac/iam.tf`, `iac/ecr.tf` — Terraform que provisiona a role OIDC e o repositório ECR usados aqui
-- `Dockerfile` — a imagem que este pipeline builda (quando o step de push existir)
+- `Dockerfile` — a imagem que este pipeline builda e publica
