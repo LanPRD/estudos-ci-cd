@@ -4,6 +4,17 @@ on:
   push:
     branches:
       - master
+    paths:
+      - "src/**"
+      - "test/**"
+      - "package.json"
+      - "package-lock.json"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "tsconfig.json"
+      - "tsconfig.build.json"
+      - "nest-cli.json"
+      - ".github/workflows/ci.yml"
 
 permissions:
   contents: read
