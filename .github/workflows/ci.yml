@@ -64,8 +64,8 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           TAG: ${{ steps.generate_tag.outputs.sha }}
         run: |
-          docker build -t $REGISTRY/estudos-ci-cd:$TAG .
-          docker push $REGISTRY/estudos-ci-cd:$TAG
+          docker build -t $ECR_REGISTRY/estudos-ci-cd:$TAG .
+          docker push $ECR_REGISTRY/estudos-ci-cd:$TAG
 
       # - name: Push image
       #   run: docker push lanprd/estudos-ci-cd:${{ steps.generate_tag.outputs.sha }}
