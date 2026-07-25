@@ -100,6 +100,12 @@ identidade assinado, e o provedor de nuvem (AWS, aqui) confia nesse token porque
 foi configurada pra aceitar apenas tokens vindos deste repositório/branch específico. Sem
 credencial fixa armazenada, não há credencial fixa pra vazar.
 
+**O ARN da role (`role-to-assume`) não é segredo** — é só um identificador, como um nome de
+usuário. Quem decide se um token consegue assumir a role é a *trust policy* do lado da AWS (o
+`StringLike` no bloco ✅/❌ abaixo), não o fato de o ARN ficar visível no workflow. Publicar o ARN
+em texto puro não abre acesso a mais ninguém; guardá-lo como Secret é só conveniência (evita
+editar o YAML se a role mudar), não uma exigência de segurança.
+
 ---
 
 ## ✅ Faça / ❌ Não Faça
@@ -152,17 +158,38 @@ password: "minha-senha-123" # ❌ fica em texto puro no histórico do git
 
 ## 🎯 Exemplo do Projeto
 
-Arquivo: `.github/workflows/ci.yml`. Dispara só em push direto pra `master`:
+Arquivo: `.github/workflows/ci.yml`. Dispara em push pra `master`, mas só quando o que mudou pode
+de fato afetar o build/testes/deploy:
 
 ```yaml
 on:
   push:
     branches:
       - master
+    paths:
+      - "src/**"
+      - "test/**"
+      - "package.json"
+      - "package-lock.json"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "tsconfig.json"
+      - "tsconfig.build.json"
+      - "nest-cli.json"
+      - ".github/workflows/ci.yml"
+
+permissions:
+  contents: read
+  id-token: write
 
 env:
   NODE_VERSION: "22"
 ```
+
+`paths` evita execuções desperdiçadas para mudanças que não afetam o resultado (ex: editar um
+tutorial em `docs/`). `id-token: write` em `permissions` é o que autoriza o job a pedir ao GitHub
+um token OIDC — sem essa permissão, `configure-aws-credentials` não teria o que apresentar pra AWS
+(ver 🆚 acima).
 
 Job `build` (`runs-on: ubuntu-latest`):
 
@@ -173,7 +200,7 @@ Job `build` (`runs-on: ubuntu-latest`):
 | Instalar deps | `npm install` | Instala as dependências do projeto |
 | Testar | `npm test` | Gate de qualidade — se falhar, o job para |
 | Gerar tag | 7 chars do `$GITHUB_SHA` → `$GITHUB_OUTPUT` | Cria a tag rastreável ao commit |
-| Configurar credenciais AWS | `aws-actions/configure-aws-credentials@v6.2.3` | Assume a role via OIDC (ver 🆚 acima) |
+| Configurar credenciais AWS | `aws-actions/configure-aws-credentials@v6.2.3` | Assume `arn:aws:iam::958157975241:role/ecr-role` via OIDC |
 | Login no ECR | `aws-actions/amazon-ecr-login@v2` | Autentica o Docker no Amazon ECR |
 
 A role e o repositório ECR usados aqui vêm do Terraform em `iac/` (ver `iac/iam.tf` e
@@ -191,11 +218,11 @@ A role e o repositório ECR usados aqui vêm do Terraform em `iac/` (ver `iac/ia
 ## ⚠️ Armadilhas
 
 **🚧 Migração em andamento, pipeline não publica nada no momento** — o workflow hoje testa, gera a
-tag e autentica no ECR, mas não existe (ainda) um step de build+push apontando pra ECR depois do
-login. `role-to-assume` na configuração de credenciais também está vazio. Os steps antigos do
-Docker Hub (`docker/login-action` + `docker/build-push-action`) ficaram comentados no arquivo como
-histórico da transição, não deletados — não rodam, mas também não devem ser reativados sem revisar
-se ainda fazem sentido junto com a autenticação nova.
+tag e já autentica no ECR (role e permissões já configuradas), mas não existe (ainda) um step de
+build+push apontando pra ECR depois do login. Os steps antigos do Docker Hub
+(`docker/login-action` + `docker/build-push-action`) ficaram comentados no arquivo como histórico
+da transição, não deletados — não rodam, mas também não devem ser reativados sem revisar se ainda
+fazem sentido junto com a autenticação nova.
 
 **Este workflow usa `npm install`, não `npm ci`** — o `Dockerfile` do mesmo projeto já usa
 `npm ci` (mais estrito e reprodutível). Vale alinhar os dois quando a migração for finalizada.
@@ -205,7 +232,8 @@ se ainda fazem sentido junto com a autenticação nova.
 ## Checklist Para Replicar em Outro Projeto
 
 1. Criar `.github/workflows/<nome>.yml` com o evento que deve disparar o pipeline
-   (`on.push.branches`, `on.pull_request`, etc).
+   (`on.push.branches`, `on.pull_request`, etc). Considere restringir com `on.push.paths` pra não
+   rodar o pipeline em mudanças que não afetam o build (ex: só documentação).
 2. Definir a versão do runtime via `env` e usar a action oficial de setup com cache habilitado.
 3. Instalar dependências de forma reprodutível (`npm ci`) e rodar a suíte de testes como **gate**
    antes de qualquer publicação.
@@ -224,7 +252,7 @@ se ainda fazem sentido junto com a autenticação nova.
 
 | Decisão | Estado atual deste projeto | Alternativa comum |
 | --- | --- | --- |
-| Trigger | push em `master` | `pull_request`, tags, `workflow_dispatch` |
+| Trigger | push em `master`, filtrado por `paths` | `pull_request`, tags, `workflow_dispatch` |
 | Instalar deps | `npm install` (inconsistente com o Dockerfile) | `npm ci` |
 | Registry | migrando de Docker Hub para AWS ECR (ainda sem step de push) | GitHub Container Registry, GCP Artifact Registry |
 | Autenticação | OIDC via IAM Role (`iac/iam.tf`) | Secrets fixos (usuário/token) |
