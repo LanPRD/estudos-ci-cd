@@ -69,9 +69,25 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build docker image
+        id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           TAG: ${{ steps.generate_tag.outputs.sha }}
         run: |
           docker build -t $ECR_REGISTRY/estudos-ci-cd:$TAG .
           docker push $ECR_REGISTRY/estudos-ci-cd:$TAG
+          docker tag $ECR_REGISTRY/estudos-ci-cd:$TAG $ECR_REGISTRY/estudos-ci-cd:latest
+          docker push $ECR_REGISTRY/estudos-ci-cd:latest
+          IMAGE=$(echo $ECR_REGISTRY/estudos-ci-cd:$TAG)
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Deploy to ECS Express
+        uses: aws-actions/amazon-ecs-deploy-express-service@v1
+        with:
+          service-name: estudos-ci-cd
+          image: ${{ steps.build-image.outputs.image }}
+          execution-role-arn: arn:aws:iam::958157975241:role/ecs-execution-role
+          infrastructure-role-arn: arn:aws:iam::958157975241:role/ecs-express-infrastructure-role
+          container-port: 3000
+          cpu: "256"
+          memory: "512"
