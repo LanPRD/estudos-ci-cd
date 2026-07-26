@@ -182,8 +182,10 @@ on:
       - ".github/workflows/ci.yml"
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
+  issues: write
+  pull-requests: write
 
 env:
   NODE_VERSION: "22"
@@ -192,31 +194,73 @@ env:
 `paths` evita execuções desperdiçadas para mudanças que não afetam o resultado (ex: editar um
 tutorial em `docs/`). `id-token: write` em `permissions` é o que autoriza o job a pedir ao GitHub
 um token OIDC — sem essa permissão, `configure-aws-credentials` não teria o que apresentar pra AWS
-(ver 🆚 acima).
+(ver 🆚 acima). As outras três permissões (`contents: write`, `issues: write`,
+`pull-requests: write`) não são deste pipeline em si — são o que o step de **Semantic Release**
+precisa pra commitar changelog, criar tag/release e comentar em issues/PRs; ver o
+[tutorial dedicado](./semantic-release.md) pro porquê de cada uma.
 
 Job `build` (`runs-on: ubuntu-latest`):
 
-| Step                       | Action/comando                                 | Papel                                                             |
-| -------------------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
-| Checkout                   | `actions/checkout@v7`                          | Clona o repositório no runner                                     |
-| Setup Node                 | `actions/setup-node@v7`, `cache: npm`          | Instala o Node na versão de `env.NODE_VERSION`, com cache de deps |
-| Instalar deps              | `npm install`                                  | Instala as dependências do projeto                                |
-| Testar                     | `npm test`                                     | Gate de qualidade — se falhar, o job para                         |
-| Gerar tag                  | 7 chars do `$GITHUB_SHA` → `$GITHUB_OUTPUT`    | Cria a tag rastreável ao commit                                   |
-| Configurar credenciais AWS | `aws-actions/configure-aws-credentials@v6.2.3` | Assume `arn:aws:iam::958157975241:role/ecr-role` via OIDC         |
-| Login no ECR               | `aws-actions/amazon-ecr-login@v2`              | Autentica o Docker no Amazon ECR                                  |
-| Build + Push                | `docker build` / `docker push` (manual)        | Builda a imagem e publica em `$ECR_REGISTRY/estudos-ci-cd:$TAG`   |
+| Step                       | Action/comando                                     | Papel                                                                                         |
+| -------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Checkout                   | `actions/checkout@v7`, `fetch-depth: 0`            | Clona o repositório com histórico completo no runner                                          |
+| Setup Node                 | `actions/setup-node@v7`, `cache: npm`              | Instala o Node na versão de `env.NODE_VERSION`, com cache de deps                             |
+| Instalar deps              | `npm install`                                      | Instala as dependências do projeto                                                            |
+| Testar                     | `npm test`                                         | Gate de qualidade — se falhar, o job para                                                     |
+| Semantic Release           | `cycjimmy/semantic-release-action@v6`              | Calcula versão, gera changelog/tag/release (ver [tutorial dedicado](./semantic-release.md))   |
+| Gerar tag                  | 7 chars do `$GITHUB_SHA` → `$GITHUB_OUTPUT`        | Cria a tag da **imagem Docker**, rastreável ao commit (não é a mesma tag do semantic-release) |
+| Configurar credenciais AWS | `aws-actions/configure-aws-credentials@v6.2.3`     | Assume `arn:aws:iam::958157975241:role/ecr-role` via OIDC                                     |
+| Login no ECR               | `aws-actions/amazon-ecr-login@v2`                  | Autentica o Docker no Amazon ECR                                                              |
+| Build + Push               | `docker build` / `docker push` (comandos manuais)  | Builda a imagem e publica `$ECR_REGISTRY/estudos-ci-cd:$TAG` e `:latest`                      |
+| Deploy                     | `aws-actions/amazon-ecs-deploy-express-service@v1` | Atualiza o serviço ECS Express (`iac/ecs.tf`) pra rodar a imagem recém-publicada              |
 
-A role e o repositório ECR usados aqui vêm do Terraform em `iac/` (ver `iac/iam.tf` e
-`iac/ecr.tf`) — o `sub` da role de confiança está atrelado a este repo e à branch `master`. O
-registry vem do output do próprio step de login (`steps.login-ecr.outputs.registry`), e a tag é a
-gerada no step "Gerar tag" — a imagem final fica `<registry>/estudos-ci-cd:<sha>`.
+A role e o repositório ECR usados aqui vêm do Terraform em `iac/` (ver `iac/iam.tf`, `iac/ecr.tf` e
+`iac/ecs.tf`, e o [tutorial de IaC](./iac-terraform-aws.md)) — o `sub` da role de confiança está
+atrelado a este repo e à branch `master`. O registry vem do output do próprio step de login
+(`steps.login-ecr.outputs.registry`), e a tag é a gerada no step "Gerar tag" — a imagem final fica
+`<registry>/estudos-ci-cd:<sha>`. O step de deploy recebe essa mesma imagem via
+`steps.build-image.outputs.image` — nenhuma tag é hardcoded duas vezes.
+
+**Duas tags diferentes, dois propósitos diferentes**: a tag do semantic-release (`vX.Y.Z`, num
+commit no git) versiona o _código_; a tag `$SHA` do step "Gerar tag" versiona a _imagem Docker_.
+Elas não precisam (nem costumam) coincidir — a imagem é rastreável ao commit exato, a release é
+rastreável ao histórico de mudanças "visível pra humano".
 
 ### 🔍 Onde Ver as Execuções
 
 - **GitHub → aba Actions** do repositório: cada execução, com logs por step.
 - **AWS → ECR → repositório `estudos-ci-cd`**: as imagens publicadas, uma tag por SHA.
 - **AWS → IAM → Roles → `ecr-role`**: a role assumida via OIDC e sua política de confiança.
+
+---
+
+## 🏗️ Dois Pipelines Separados: App vs Infraestrutura
+
+Este projeto tem **dois** workflows, não um só, cada um disparado por mudanças em pastas
+diferentes e autenticando com uma role OIDC diferente:
+
+```text
+push pra master
+   │
+   ├── mudou src/, test/, package.json, Dockerfile...  ──►  ci.yml (assume ecr-role)
+   │                                                          testa → versiona → builda → publica → faz deploy
+   │
+   └── mudou iac/**  ─────────────────────────────────►  ci-terraform.yml (assume tf-role)
+                                                             terraform plan → terraform apply
+```
+
+| Aspecto                | `ci.yml`                                                            | `ci-terraform.yml`                        |
+| ---------------------- | ------------------------------------------------------------------- | ----------------------------------------- |
+| Dispara em mudanças em | `src/`, `test/`, `package.json`, `Dockerfile`...                    | `iac/**`                                  |
+| Role OIDC assumida     | `ecr-role`                                                          | `tf-role`                                 |
+| O que faz              | Testa, versiona, builda a imagem, publica no ECR, faz deploy no ECS | `terraform fmt -check` → `plan` → `apply` |
+| Working directory      | raiz do repo                                                        | `iac/` (`defaults.run.working-directory`) |
+
+Separar em duas roles/pipelines segue o mesmo raciocínio de menor privilégio do
+[tutorial de IaC](./iac-terraform-aws.md#-fa%C3%A7a--n%C3%A3o-fa%C3%A7a): um bug ou uma dependência
+comprometida no pipeline de aplicação não tem, por construção, permissão pra alterar a
+infraestrutura (criar/destruir roles, buckets, etc) — e vice-versa, mudar um `.tf` não dispara
+rebuild/redeploy da aplicação por engano.
 
 ---
 
@@ -254,18 +298,24 @@ temporário decodifica o token (remova depois — não é pra ficar rodando perm
 
 _(Fonte: [changelog oficial do GitHub sobre immutable subject claims](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/).)_
 
-**Build + push manuais em vez de uma action dedicada** — o step final roda `docker build` e
-`docker push` diretamente (ver checklist item 6 abaixo, que recomenda o contrário). Funciona, mas
-uma action como `docker/build-push-action` (equivalente pra ECR não existe oficial, mas dá pra
-compor build-push-action + login-ecr) cuida de cache de camadas e evita erros de digitação nos
-comandos manuais — considere migrar se o pipeline crescer.
-
-Ainda sobra um step comentado órfão no fim do arquivo (`# - name: Push image`, um resquício da
-versão Docker Hub) — não afeta a execução, mas é candidato a limpeza junto dos outros comentários
-que já foram removidos.
+**Build + push manuais em vez de uma action dedicada** — o step de build roda `docker build` e
+`docker push` diretamente (ver checklist item 6 abaixo, que recomenda o contrário), enquanto o
+step de deploy logo depois já usa uma action oficial (`amazon-ecs-deploy-express-service`). Os
+comandos manuais funcionam, mas uma action como `docker/build-push-action` (não existe um
+equivalente oficial específico pra ECR, mas dá pra compor `build-push-action` + `amazon-ecr-login`)
+cuida de cache de camadas e evita erros de digitação — considere migrar se o pipeline crescer.
 
 **Este workflow usa `npm install`, não `npm ci`** — o `Dockerfile` do mesmo projeto já usa
 `npm ci` (mais estrito e reprodutível). Vale alinhar os dois quando a migração for finalizada.
+
+**`ci-terraform.yml` sem `working-directory` não encontra os arquivos `.tf`** — ao criar o segundo
+pipeline (o de infraestrutura), é fácil esquecer que `terraform init`/`plan`/`apply` rodam, por
+padrão, na raiz do checkout — não em `iac/`. Sem `defaults.run.working-directory: iac` no job (ou
+`working-directory:` em cada step), os comandos falham por não encontrar nenhum arquivo `.tf`. O
+mesmo workflow também chegou a ter um `paths` apontando pra uma pasta `terraform/**` que nunca
+existiu neste projeto (o diretório real é `iac/`) — o pipeline simplesmente nunca disparava, sem
+nenhum erro visível, porque do ponto de vista do GitHub Actions nenhuma mudança relevante jamais
+acontecia.
 
 ---
 
@@ -290,16 +340,21 @@ que já foram removidos.
 
 ## 📝 Resumo
 
-| Decisão           | Estado atual deste projeto                                   | Alternativa comum                                |
-| ----------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| Trigger           | push em `master`, filtrado por `paths`                       | `pull_request`, tags, `workflow_dispatch`        |
-| Instalar deps     | `npm install` (inconsistente com o Dockerfile)               | `npm ci`                                         |
-| Registry          | AWS ECR (migrado de Docker Hub)                               | GitHub Container Registry, GCP Artifact Registry |
-| Autenticação      | OIDC via IAM Role (`iac/iam.tf`)                             | Secrets fixos (usuário/token)                    |
-| Estratégia de tag | SHA curto + `latest`                                         | SemVer, data, ambos combinados                   |
+| Decisão           | Estado atual deste projeto                                       | Alternativa comum                                |
+| ----------------- | ---------------------------------------------------------------- | ------------------------------------------------ |
+| Trigger           | push em `master`, filtrado por `paths`                           | `pull_request`, tags, `workflow_dispatch`        |
+| Instalar deps     | `npm install` (inconsistente com o Dockerfile)                   | `npm ci`                                         |
+| Registry          | AWS ECR                                                          | GitHub Container Registry, GCP Artifact Registry |
+| Autenticação      | OIDC via IAM Role (`iac/iam.tf`)                                 | Secrets fixos (usuário/token)                    |
+| Estratégia de tag | SHA curto (imagem) + SemVer via semantic-release (release)       | SemVer só, data, ambos combinados                |
+| Deploy            | Amazon ECS Express Mode, num pipeline separado do de infra       | Mesmo pipeline pra infra+app, ou deploy manual   |
+| Infra como código | Pipeline dedicado (`ci-terraform.yml`), role própria (`tf-role`) | `terraform apply` local, sem CI                  |
 
 ## Referência
 
-- `.github/workflows/ci.yml`
-- `iac/iam.tf`, `iac/ecr.tf` — Terraform que provisiona a role OIDC e o repositório ECR usados aqui
+- `.github/workflows/ci.yml` — pipeline de aplicação (testa, versiona, builda, publica, faz deploy)
+- `.github/workflows/ci-terraform.yml` — pipeline de infraestrutura (`terraform plan`/`apply`)
+- `iac/iam.tf`, `iac/ecr.tf`, `iac/ecs.tf` — Terraform que provisiona as roles OIDC, o repositório
+  ECR e o serviço ECS Express usados aqui (ver [tutorial de IaC](./iac-terraform-aws.md))
+- `.releaserc.json` — configuração do semantic-release (ver [tutorial dedicado](./semantic-release.md))
 - `Dockerfile` — a imagem que este pipeline builda e publica
