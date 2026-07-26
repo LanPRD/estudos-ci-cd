@@ -4,9 +4,35 @@ resource "aws_iam_role_policy" "ecr-app-permission" {
 
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [
+    Statement = [{
+      Sid    = "Statement1"
+      Effect = "Allow"
+      Action = [
+        "ecs:CreateCluster",
+        "ecs:RegisterTaskDefinition",
+        "ecs:CreateExpressGatewayService",
+        "ecs:UpdateExpressGatewayService",
+        "ecs:DescribeExpressGatewayService",
+        "ecs:DescribeClusters",
+        "ecs:DescribeServices",
+        "ecs:ListServiceDeployments",
+        "ecs:DescribeServiceDeployments",
+        "ecs:TagResource",
+        "ecs:UntagResource"
+      ]
+      Resource = "*"
+      },
       {
-        Sid    = "Statement1",
+        Sid = "Statement2"
+        Action = [
+          "iam:PassRole",
+          "iam:CreateServiceLinkedRole",
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+      {
+        Sid    = "Statement3",
         Effect = "Allow",
         Action = [
           "ecr:GetDownloadUrlForLayer",
@@ -22,4 +48,14 @@ resource "aws_iam_role_policy" "ecr-app-permission" {
       }
     ]
   })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs-execution-role-policy" {
+  role       = aws_iam_role.ecs-execution-role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "ecs-express-infrastructure-role-policy" {
+  role       = aws_iam_role.ecs-express-infrastructure-role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices"
 }
