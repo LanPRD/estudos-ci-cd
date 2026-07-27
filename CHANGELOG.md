@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/LanPRD/estudos-ci-cd/compare/v1.0.0...v1.0.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **iac:** add ecr:DescribeImages to tf-role-permission ([b1265c6](https://github.com/LanPRD/estudos-ci-cd/commit/b1265c6a2e6c1b53bb4354e6b9e6ac78cfe7868f))
+
 # 1.0.0 (2026-07-26)
 
 
