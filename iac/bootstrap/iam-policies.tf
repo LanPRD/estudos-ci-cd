@@ -64,6 +64,7 @@ resource "aws_iam_role_policy" "tf-role-permission" {
           "ecr:CreateRepository",
           "ecr:DeleteRepository",
           "ecr:DescribeRepositories",
+          "ecr:DescribeImages",
           "ecr:PutImageScanningConfiguration",
           "ecr:PutImageTagMutability",
           "ecr:TagResource",
