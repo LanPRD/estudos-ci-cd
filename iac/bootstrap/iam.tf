@@ -9,7 +9,7 @@ resource "aws_iam_role" "tf-role" {
         "Effect" : "Allow",
         "Action" : "sts:AssumeRoleWithWebIdentity",
         "Principal" : {
-          "Federated" : "arn:aws:iam::958157975241:oidc-provider/token.actions.githubusercontent.com"
+          "Federated" : aws_iam_openid_connect_provider.oidc-git.arn
         },
         "Condition" : {
           "StringEquals" : {
@@ -43,7 +43,7 @@ resource "aws_iam_role" "ecr-role" {
         "Effect" : "Allow",
         "Action" : "sts:AssumeRoleWithWebIdentity",
         "Principal" : {
-          "Federated" : "arn:aws:iam::958157975241:oidc-provider/token.actions.githubusercontent.com"
+          "Federated" : aws_iam_openid_connect_provider.oidc-git.arn
         },
         "Condition" : {
           "StringEquals" : {
