@@ -64,6 +64,21 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Variáveis com valores reais — use terraform.tfvars.example como referência
 *.tfvars
+*.tfvars.json
 
 # Providers e módulos baixados — regeneráveis com terraform init
 .terraform/
+
+# Logs de crash do Terraform
+crash.log
+crash.*.log
+
+# Overrides locais — não devem ir pro controle de versão
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Config de CLI local do Terraform
+.terraformrc
+terraform.rc
