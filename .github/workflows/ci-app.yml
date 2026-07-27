@@ -1,4 +1,4 @@
-name: "CI"
+name: "CI App"
 
 on:
   push:
@@ -14,7 +14,7 @@ on:
       - "tsconfig.json"
       - "tsconfig.build.json"
       - "nest-cli.json"
-      - ".github/workflows/ci.yml"
+      - ".github/workflows/ci-app.yml"
 
 permissions:
   contents: write
@@ -81,13 +81,23 @@ jobs:
           IMAGE=$(echo $ECR_REGISTRY/estudos-ci-cd:$TAG)
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
-      - name: Deploy to ECS Express
-        uses: aws-actions/amazon-ecs-deploy-express-service@v1
+      - name: Configure AWS Credentials for Terraform
+        uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
-          service-name: estudos-ci-cd
-          image: ${{ steps.build-image.outputs.image }}
-          execution-role-arn: arn:aws:iam::958157975241:role/ecs-execution-role
-          infrastructure-role-arn: arn:aws:iam::958157975241:role/ecs-express-infrastructure-role
-          container-port: 3000
-          cpu: "256"
-          memory: "512"
+          aws-region: sa-east-1
+          role-to-assume: arn:aws:iam::958157975241:role/tf-role
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+
+      - name: Terraform Init
+        working-directory: iac/service
+        run: terraform init
+
+      - name: Deploy to ECS Express
+        working-directory: iac/service
+        env:
+          TAG: ${{ steps.generate_tag.outputs.sha }}
+        run: terraform apply -auto-approve -var="image_tag=$TAG"

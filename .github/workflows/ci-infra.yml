@@ -1,12 +1,12 @@
-name: CI Terraform
+name: CI Infra
 
 on:
   push:
     branches:
       - master
     paths:
-      - "iac/**"
-      - ".github/workflows/ci-terraform.yml"
+      - "iac/infra/**"
+      - ".github/workflows/ci-infra.yml"
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: iac
+        working-directory: iac/infra
 
     steps:
       - uses: actions/checkout@v7
