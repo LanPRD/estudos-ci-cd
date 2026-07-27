@@ -75,9 +75,8 @@ jobs:
           TAG: ${{ steps.generate_tag.outputs.sha }}
         run: |
           docker build -t $ECR_REGISTRY/estudos-ci-cd:$TAG .
-          docker push $ECR_REGISTRY/estudos-ci-cd:$TAG
           docker tag $ECR_REGISTRY/estudos-ci-cd:$TAG $ECR_REGISTRY/estudos-ci-cd:latest
-          docker push $ECR_REGISTRY/estudos-ci-cd:latest
+          docker push --all-tags $ECR_REGISTRY/estudos-ci-cd
           IMAGE=$(echo $ECR_REGISTRY/estudos-ci-cd:$TAG)
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
